@@ -3,3 +3,23 @@ dist/
 .env
 .env.*
 !.env.example
+.vercel
+.env*
+
+# Demo backend local data
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+
+# Local backups and temporary files
+backups/
+*.backup
+*.pre-*
+*.before-*
+__pycache__/
+*.py[cod]
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+*.backup_*
+*.pre_*
