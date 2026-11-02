@@ -14,7 +14,7 @@ const state = {
 };
 
 const amounts = [10, 50, 100, 500, 1000, 5000, 10000];
-const fmt = n => Math.round(n).toLocaleString('en-IN') + ' PTS';
+const fmt = n => Math.round(n).toLocaleString('en-IN') + '';
 
 function totalPending() {
   return Object.values(state.pending).reduce((a,b)=>a+b,0);
@@ -27,7 +27,7 @@ function render() {
         <div class="logo">⚡ DUAL<span>CLASH</span></div>
         <div class="right-head">
           <div class="wallet">
-            <small>DEMO BALANCE</small>
+            <small>BALANCE</small>
             <b id="wallet">${fmt(state.balance)}</b>
           </div>
           <button class="menu-btn" id="menuBtn">☰</button>
@@ -89,7 +89,7 @@ function render() {
       </section>
 
       <section class="amount-section">
-        <div class="table-heading"><b>SELECT DEMO POINTS</b></div>
+        <div class="table-heading"><b>SELECT AMOUNT</b></div>
         <div class="amounts">
           ${amounts.map(n=>`
             <button data-amount="${n}" class="${n===10?'active':''}">${n.toLocaleString('en-IN')}</button>
@@ -220,7 +220,7 @@ function bindEvents() {
       const next = totalPending()+state.amount;
 
       if(next>state.balance) {
-        toast('Not enough demo points!');
+        toast('Insufficient balance!');
         return;
       }
 
@@ -273,7 +273,7 @@ function confirmBets() {
   if(!total || state.locked) return;
 
   if(total>state.balance) {
-    toast('Not enough demo points!');
+    toast('Insufficient balance!');
     return;
   }
 
@@ -287,72 +287,151 @@ function confirmBets() {
   toast('Selections confirmed');
 }
 
-function startRound() {
-  state.timer = 35;
-  state.locked = false;
-  state.pending = {};
-  state.confirmed = [];
 
-  document.querySelector('#round').textContent = state.round;
-  document.querySelector('#pulseResult').textContent = '0';
-  document.querySelector('#bladeResult').textContent = '0';
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
-  document.querySelectorAll('.fighter').forEach(el=>{
-    el.classList.remove('winner-fighter','loser-fighter','tie-fighter');
-  });
+async function demoApi(path) {
+  const response = await fetch(`${API_BASE}${path}`, { cache: 'no-store' });
+  const data = await response.json();
 
-  document.querySelectorAll('.fighter-name').forEach(el=>el.classList.remove('hidden'));
-  document.querySelectorAll('.result-card,.winner-label').forEach(el=>el.classList.add('hidden'));
+  if (!response.ok || !data.success) {
+    const error = new Error(data.message || 'Round API failed');
+    error.status = response.status;
+    throw error;
+  }
 
-  document.querySelector('#arenaStatus').textContent = 'PULSE VS BLADE';
-  document.querySelector('#winnerResult').textContent = 'Choose your prediction';
-  document.querySelector('#parityResult').textContent = 'Choose your prediction';
-  document.querySelector('#numberResult').textContent = 'Choose a number from 0 to 9';
-
-  updatePending();
-
-  clearInterval(window.roundClock);
-
-  window.roundClock = setInterval(()=>{
-    state.timer--;
-    document.querySelector('#timer').textContent = '00:'+String(state.timer).padStart(2,'0');
-
-    if(state.timer<=0) {
-      clearInterval(window.roundClock);
-      finishRound();
-    }
-  },1000);
+  return data;
 }
 
-function finishRound() {
+async function loadDemoHistory() {
+  try {
+    const data = await demoApi('/api/demo/round/history');
+    state.history = data.history.map(r => ({
+      round: r.round_id,
+      pulse: r.pulse,
+      blade: r.blade,
+      winner: r.winner
+    }));
+    updateHistory();
+  } catch (error) {
+    console.error('History unavailable:', error);
+  }
+}
+
+async function startRound() {
+  clearInterval(window.roundClock);
+  clearTimeout(window.roundRetry);
+
+  state.locked = true;
+  state.pending = {};
+  state.confirmed = [];
+  updatePending();
+
+  try {
+    const data = await demoApi('/api/demo/round/current');
+    const round = data.round;
+
+    state.round = round.round_id;
+
+    document.querySelector('#round').textContent = state.round;
+    document.querySelector('#pulseResult').textContent = '0';
+    document.querySelector('#bladeResult').textContent = '0';
+
+    document.querySelectorAll('.fighter').forEach(el => {
+      el.classList.remove('winner-fighter', 'loser-fighter', 'tie-fighter');
+    });
+
+    document.querySelectorAll('.fighter-name').forEach(el => el.classList.remove('hidden'));
+    document.querySelectorAll('.result-card,.winner-label').forEach(el => el.classList.add('hidden'));
+
+    document.querySelector('#arenaStatus').textContent = 'PULSE VS BLADE';
+    document.querySelector('#winnerResult').textContent = 'Choose your prediction';
+    document.querySelector('#parityResult').textContent = 'Choose your prediction';
+    document.querySelector('#numberResult').textContent = 'Choose a number from 0 to 9';
+
+    function tick() {
+      const remaining = Math.max(0, Math.ceil(round.end_time - Date.now() / 1000));
+
+      state.timer = remaining;
+      document.querySelector('#timer').textContent =
+        '00:' + String(remaining).padStart(2, '0');
+
+      if (remaining <= 5 && !state.locked) {
+        state.locked = true;
+        updatePending();
+      }
+
+      if (remaining === 0) {
+        clearInterval(window.roundClock);
+        finishRound(round.round_id);
+      }
+    }
+
+    state.locked = Math.ceil(round.end_time - Date.now() / 1000) <= 5;
+    updatePending();
+    tick();
+
+    if (state.timer > 0) {
+      window.roundClock = setInterval(tick, 250);
+    }
+
+    loadDemoHistory();
+
+  } catch (error) {
+    console.error('Round connection failed:', error);
+    state.locked = true;
+    updatePending();
+    toast('Server connection unavailable');
+    window.roundRetry = setTimeout(startRound, 3000);
+  }
+}
+
+async function finishRound(roundId) {
   state.locked = true;
   updatePending();
 
   document.querySelector('#timer').textContent = '00:00';
   document.querySelector('#arenaStatus').textContent = 'REVEALING RESULTS';
 
-  const pulse = Math.floor(Math.random()*10);
-  const blade = Math.floor(Math.random()*10);
-  const winner = pulse>blade?'PULSE':blade>pulse?'BLADE':'TIE';
-  const higher = Math.max(pulse,blade);
-  const parity = higher%2===0?'EVEN':'ODD';
+  let result;
+
+  try {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        result = await demoApi(`/api/demo/round/${roundId}`);
+        break;
+      } catch (error) {
+        if (error.status !== 403 || attempt === 9) throw error;
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+  } catch (error) {
+    console.error('Result unavailable:', error);
+    toast('Unable to load round result');
+    setTimeout(() => finishRound(roundId), 1000);
+    return;
+  }
+
+  const { pulse, blade, winner } = result;
+  const higher = Math.max(pulse, blade);
+  const parity = higher % 2 === 0 ? 'EVEN' : 'ODD';
 
   document.querySelector('#pulseResult').textContent = String(pulse);
   document.querySelector('#bladeResult').textContent = String(blade);
 
-  document.querySelectorAll('.fighter-name').forEach(el=>el.classList.add('hidden'));
-  document.querySelectorAll('.result-card').forEach(el=>el.classList.remove('hidden'));
+  document.querySelectorAll('.fighter-name').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.result-card').forEach(el => el.classList.remove('hidden'));
 
-  if(winner==='PULSE') {
+  if (winner === 'PULSE') {
     document.querySelector('#pulseFighter').classList.add('winner-fighter');
     document.querySelector('#bladeFighter').classList.add('loser-fighter');
     document.querySelector('#pulseWinner').classList.remove('hidden');
-  } else if(winner==='BLADE') {
+  } else if (winner === 'BLADE') {
     document.querySelector('#bladeFighter').classList.add('winner-fighter');
     document.querySelector('#pulseFighter').classList.add('loser-fighter');
     document.querySelector('#bladeWinner').classList.remove('hidden');
   } else {
-    document.querySelectorAll('.fighter').forEach(el=>el.classList.add('tie-fighter'));
+    document.querySelectorAll('.fighter').forEach(el => el.classList.add('tie-fighter'));
     document.querySelector('#arenaStatus').textContent = 'ROUND TIED';
   }
 
@@ -360,61 +439,58 @@ function finishRound() {
   document.querySelector('#parityResult').textContent = `${parity} · Higher number ${higher}`;
   document.querySelector('#numberResult').textContent = `Revealed numbers: ${pulse} and ${blade}`;
 
-  if(winner!=='TIE') {
+  if (winner !== 'TIE') {
     document.querySelector('#arenaStatus').textContent = `${winner} WINS`;
   }
 
   let payout = 0;
   let wins = 0;
 
-  state.confirmed.forEach(b=>{
-    const [market,choice] = b.key.split(':');
+  state.confirmed.forEach(b => {
+    const [market, choice] = b.key.split(':');
     let won = false;
 
-    if(market==='winner') {
-      if(winner==='TIE') {
+    if (market === 'winner') {
+      if (winner === 'TIE') {
         payout += b.amount;
         won = true;
-      } else if(choice===winner) {
-        payout += b.amount*2;
+      } else if (choice === winner) {
+        payout += b.amount * 2;
         won = true;
       }
     }
 
-    if(market==='parity' && choice===parity) {
-      payout += b.amount*2;
+    if (market === 'parity' && choice === parity) {
+      payout += b.amount * 2;
       won = true;
     }
 
-    if(market==='number' && (Number(choice)===pulse || Number(choice)===blade)) {
-      payout += b.amount*9;
+    if (market === 'number' &&
+        (Number(choice) === pulse || Number(choice) === blade)) {
+      payout += b.amount * 9;
       won = true;
     }
 
-    if(won) wins++;
+    if (won) wins++;
   });
 
-  if(payout>0) {
-    const oldBalance = state.balance;
+  if (payout > 0) {
     state.balance += payout;
     animateBalance(state.balance);
     toast(`${wins} winning selection(s) · +${fmt(payout)}`);
 
     const wallet = document.querySelector('.wallet');
     wallet.classList.add('wallet-win');
-    setTimeout(()=>wallet.classList.remove('wallet-win'),1200);
-  } else if(state.confirmed.length) {
+    setTimeout(() => wallet.classList.remove('wallet-win'), 1200);
+  } else if (state.confirmed.length) {
     toast('Round settled');
   }
 
-  state.history.unshift({round:state.round,pulse,blade,winner});
-  state.history = state.history.slice(0,8);
+  state.history.unshift({ round: state.round, pulse, blade, winner });
+  state.history = state.history.slice(0, 8);
   updateHistory();
 
-  setTimeout(()=>{
-    state.round++;
-    startRound();
-  },6000);
+  setTimeout(startRound, 6000);
 }
 
 function updateHistory() {
