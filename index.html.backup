@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dual Clash</title>
+  <style>
+    body {
+      background: #101827;
+      color: white;
+      font-family: Arial;
+      text-align: center;
+      padding: 50px 15px;
+    }
+    .card {
+      background: #202b4a;
+      padding: 30px;
+      border-radius: 20px;
+    }
+    button {
+      padding: 12px 25px;
+      background: #38bdf8;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Dual Clash</h1>
+    <p>Your Mini App is working!</p>
+    <button onclick="alert('Welcome to Dual Clash!')">
+      Get Started
+    </button>
+  </div>
+</body>
+</html>

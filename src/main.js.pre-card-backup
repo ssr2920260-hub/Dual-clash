@@ -1,0 +1,388 @@
+import './style.css'
+import { createBattleScene } from './3d/battle.js'
+
+document.querySelector('#app').innerHTML = `
+<div class="game">
+
+  <header class="header">
+    <div class="brand">
+      <span class="brand-icon">⚔️</span>
+      <span>DUAL CLASH</span>
+    </div>
+    <div class="wallet" id="wallet">
+      <span>₹ <b id="balance">10000</b></span>
+      <button id="help">ⓘ</button>
+    </div>
+  </header>
+
+  <div class="history-strip">
+    <div id="recentResults">Recent Results</div>
+    <button id="historyBtn">📊</button>
+  </div>
+
+  <section class="battle fighting" id="battle">
+    <div class="round">ROUND <span id="round">001</span></div>
+    <div class="arena-wrap">
+      <div class="arena-results">
+        <div class="result-pulse">PULSE <span id="pulseNumber">?</span></div>
+        <div class="result-blade">BLADE <span id="bladeNumber">?</span></div>
+      </div>
+      <div id="arena3d" class="arena3d"></div>
+    </div>
+
+    <div class="timer" id="timer">35</div>
+    <div class="battle-status" id="status">BATTLE IN PROGRESS</div>
+  </section>
+
+  <section class="bet-section">
+    <h3>CHOOSE YOUR WINNER</h3>
+    <div class="bet-grid">
+      <button class="bet-option" data-type="winner" data-value="Pulse">
+        🔵 PULSE <span>2X</span><b></b>
+      </button>
+      <button class="bet-option" data-type="winner" data-value="Blade">
+        🔴 BLADE <span>2X</span><b></b>
+      </button>
+    </div>
+  </section>
+
+  <section class="bet-section">
+    <h3>ODD / EVEN</h3>
+    <div class="bet-grid">
+      <button class="bet-option" data-type="oddEven" data-value="Odd">
+        ODD <span>2X</span><b></b>
+      </button>
+      <button class="bet-option" data-type="oddEven" data-value="Even">
+        EVEN <span>2X</span><b></b>
+      </button>
+    </div>
+  </section>
+
+  <section class="bet-section">
+    <h3>LUCKY NUMBER</h3>
+    <div class="number-grid">
+      ${Array.from({length:10},(_,i)=>`
+        <button class="bet-option" data-type="number" data-value="${i}">
+          ${i}<small>9X</small><b></b>
+        </button>
+      `).join('')}
+    </div>
+  </section>
+
+  <div class="confirm-bar" id="confirmBar">
+    <span>Do you want to place bet?</span>
+    <button id="cancelBet">✕</button>
+    <button id="confirmBet">✓</button>
+  </div>
+
+  <section class="amount-section">
+    <h3>SET BET AMOUNT</h3>
+    <div class="amount-grid">
+      ${[10,50,100,500,1000,5000].map(n=>`
+        <button class="amount-btn" data-amount="${n}">
+          ₹${n>=1000 ? (n/1000)+'K' : n}
+        </button>
+      `).join('')}
+    </div>
+  </section>
+</div>
+
+<div class="flight-layer" id="flightLayer"></div>
+
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <button id="closeModal">✕</button>
+    <h2 id="modalTitle"></h2>
+    <p id="modalText"></p>
+  </div>
+</div>
+`
+
+let balance = 10000
+let selectedAmount = 0
+let pending = {}
+let placedBets = []
+let timer = 35
+let round = 1
+let recent = []
+let roundLocked = false
+let roundInterval = null
+
+const balanceEl = document.getElementById('balance')
+const timerEl = document.getElementById('timer')
+const confirmBar = document.getElementById('confirmBar')
+const arena3d = createBattleScene()
+const battle = document.getElementById('battle')
+const flightLayer = document.getElementById('flightLayer')
+
+function updateBalance() {
+  balanceEl.textContent = balance.toLocaleString('en-IN')
+}
+
+function updatePending() {
+  document.querySelectorAll('.bet-option').forEach(btn => {
+    const key = btn.dataset.type + ':' + btn.dataset.value
+    const amount = pending[key] || 0
+    btn.classList.toggle('selected', amount > 0)
+    btn.querySelector('b').textContent = amount ? '₹' + amount : ''
+  })
+
+  confirmBar.style.display =
+    Object.keys(pending).length ? 'flex' : 'none'
+}
+
+function animateCoins(fromElement, toElement, amount, reverse = false) {
+  if (!fromElement || !toElement) return
+
+  const from = fromElement.getBoundingClientRect()
+  const to = toElement.getBoundingClientRect()
+
+  const startX = from.left + from.width / 2
+  const startY = from.top + from.height / 2
+  const endX = to.left + to.width / 2
+  const endY = to.top + to.height / 2
+
+  const coin = document.createElement('div')
+  coin.className = 'flying-coin' + (reverse ? ' returning' : '')
+  coin.textContent = '🪙'
+
+  coin.style.left = startX + 'px'
+  coin.style.top = startY + 'px'
+  coin.style.setProperty('--move-x', (endX - startX) + 'px')
+  coin.style.setProperty('--move-y', (endY - startY) + 'px')
+
+  flightLayer.appendChild(coin)
+
+  setTimeout(() => coin.remove(), 950)
+
+  if (reverse && amount > 0) {
+    const reward = document.createElement('div')
+    reward.className = 'reward-float'
+    reward.textContent = '+₹' + Math.round(amount).toLocaleString('en-IN')
+    reward.style.left = (endX - 35) + 'px'
+    reward.style.top = (endY - 15) + 'px'
+    flightLayer.appendChild(reward)
+    setTimeout(() => reward.remove(), 1400)
+  }
+}
+
+document.querySelectorAll('.amount-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.amount-btn')
+      .forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    selectedAmount = Number(btn.dataset.amount)
+  }
+})
+
+document.querySelectorAll('.bet-option').forEach(btn => {
+  btn.onclick = () => {
+    if (roundLocked) {
+      alert('Please wait for the next round!')
+      return
+    }
+
+    if (!selectedAmount) {
+      alert('Please select bet amount first!')
+      return
+    }
+
+    const key = btn.dataset.type + ':' + btn.dataset.value
+    pending[key] = (pending[key] || 0) + selectedAmount
+    updatePending()
+  }
+})
+
+document.getElementById('cancelBet').onclick = () => {
+  pending = {}
+  updatePending()
+}
+
+document.getElementById('confirmBet').onclick = () => {
+  const total = Object.values(pending).reduce((a,b) => a+b, 0)
+
+  if (!total) return
+  if (roundLocked) {
+    alert('This round is closed!')
+    return
+  }
+  if (total > balance) {
+    alert('Insufficient demo balance!')
+    return
+  }
+
+  const bets = Object.entries(pending).map(([key, amount]) => {
+    const [type, value] = key.split(':')
+    return {
+      type,
+      value,
+      amount,
+      netAmount: amount * 0.98
+    }
+  })
+
+  bets.forEach(bet => {
+    const target = document.querySelector(
+      '.bet-option[data-type="' + bet.type + '"][data-value="' + bet.value + '"]'
+    )
+    animateCoins(document.getElementById('wallet'), target, bet.amount)
+  })
+
+  balance -= total
+  updateBalance()
+
+  placedBets.push(...bets)
+  pending = {}
+  updatePending()
+
+  showToast('BET PLACED SUCCESSFULLY')
+}
+
+function showToast(message) {
+  const toast = document.createElement('div')
+  toast.className = 'game-toast'
+  toast.textContent = message
+  document.body.appendChild(toast)
+  setTimeout(() => toast.remove(), 1800)
+}
+
+function startRound() {
+  arena3d.reset()
+  timer = 35
+  roundLocked = false
+  timerEl.textContent = timer
+  timerEl.classList.remove('timer-ending')
+  battle.classList.add('fighting')
+
+  document.getElementById('pulseNumber').textContent = '?'
+  document.getElementById('bladeNumber').textContent = '?'
+  document.getElementById('status').textContent = 'BATTLE IN PROGRESS'
+  document.getElementById('round').textContent =
+    String(round).padStart(3,'0')
+
+  document.querySelectorAll('.bet-option').forEach(btn => {
+    btn.disabled = false
+  })
+
+  roundInterval = setInterval(() => {
+    timer--
+    timerEl.textContent = timer
+
+    if (timer <= 10) timerEl.classList.add('timer-ending')
+
+    if (timer <= 0) {
+      clearInterval(roundInterval)
+      finishRound()
+    }
+  }, 1000)
+}
+
+function finishRound() {
+  roundLocked = true
+  battle.classList.remove('fighting')
+  battle.classList.add('battle-finish')
+
+  document.querySelectorAll('.bet-option').forEach(btn => {
+    btn.disabled = true
+  })
+
+  const pulse = Math.floor(Math.random() * 10)
+  const blade = Math.floor(Math.random() * 10)
+
+  document.getElementById('pulseNumber').textContent = pulse
+  document.getElementById('bladeNumber').textContent = blade
+
+  const winner = pulse > blade ? 'Pulse' :
+    blade > pulse ? 'Blade' : 'Tie'
+  arena3d.finish(winner)
+
+  document.getElementById('status').textContent =
+    winner === 'Tie' ? 'ROUND TIED' : winner + ' WINS!'
+
+  recent.unshift(`${pulse} / ${blade}`)
+  recent = recent.slice(0,22)
+
+  document.getElementById('recentResults').textContent =
+    'Recent: ' + recent.join('  •  ')
+
+  settleBets(pulse, blade, winner)
+
+  round++
+  setTimeout(() => {
+    battle.classList.remove('battle-finish')
+    startRound()
+  }, 4500)
+}
+
+function settleBets(pulse, blade, winner) {
+  let totalReward = 0
+
+  placedBets.forEach(bet => {
+    let won = false
+    let multiplier = 2
+
+    if (bet.type === 'winner') {
+      won = winner === bet.value
+    }
+
+    if (bet.type === 'oddEven') {
+      const higherNumber = Math.max(pulse, blade)
+      const result = higherNumber % 2 === 0 ? 'Even' : 'Odd'
+      won = result === bet.value
+    }
+
+    if (bet.type === 'number') {
+      won = pulse === Number(bet.value) || blade === Number(bet.value)
+      multiplier = 9
+    }
+
+    if (won) {
+      const reward = bet.netAmount * multiplier
+      totalReward += reward
+
+      const target = document.querySelector(
+        '.bet-option[data-type="' + bet.type + '"][data-value="' + bet.value + '"]'
+      )
+
+      animateCoins(target, document.getElementById('wallet'), reward, true)
+      if (target) target.classList.add('winner-flash')
+    }
+  })
+
+  if (totalReward > 0) {
+    balance += totalReward
+    updateBalance()
+    showToast('YOU WON ₹' + Math.round(totalReward).toLocaleString('en-IN'))
+  } else if (placedBets.length) {
+    showToast('ROUND OVER - NO WIN')
+  }
+
+  placedBets = []
+}
+
+document.getElementById('help').onclick = () => {
+  showModal(
+    'HOW TO PLAY',
+    'Select an amount, choose your bet and confirm. Winner bets pay 2X, lucky numbers pay 9X. A 2% demo commission is deducted from each bet. Odd/Even is decided by the higher revealed number. Virtual credits only.'
+  )
+}
+
+document.getElementById('historyBtn').onclick = () => {
+  showModal(
+    'ROUND HISTORY',
+    recent.length ? recent.join('  •  ') : 'No results yet.'
+  )
+}
+
+function showModal(title, text) {
+  document.getElementById('modalTitle').textContent = title
+  document.getElementById('modalText').textContent = text
+  document.getElementById('modal').style.display = 'flex'
+}
+
+document.getElementById('closeModal').onclick = () => {
+  document.getElementById('modal').style.display = 'none'
+}
+
+updateBalance()
+startRound()
