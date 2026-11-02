@@ -11,7 +11,8 @@ app = Flask(__name__)
 
 DB_PATH = os.environ.get(
     "DB_PATH",
-    os.path.join(os.path.dirname(__file__), "dualclash_demo.db")
+    "/tmp/dualclash_demo.db" if os.environ.get("VERCEL")
+    else os.path.join(os.path.dirname(__file__), "dualclash_demo.db")
 )
 
 SEED_FILE = os.path.join(os.path.dirname(__file__), "demo_rounds.json")
