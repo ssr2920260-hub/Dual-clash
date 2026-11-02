@@ -28,7 +28,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .app-shell {
   width: min(100% - 22px, 540px);
   margin: auto;
-  padding: 16px 0 95px;
+  padding: 8px 0 95px;
 }
 
 .header {
